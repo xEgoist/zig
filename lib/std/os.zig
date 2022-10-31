@@ -102,7 +102,7 @@ pub const MMAP2_UNIT = system.MMAP2_UNIT;
 pub const MSG = system.MSG;
 pub const NAME_MAX = system.NAME_MAX;
 pub const O = switch (builtin.os.tag) {
-    // We want to expose the POSIX-like OFLAGS, so we use std.c.wasi.O instead
+    // We want to expose the POSIX-like OFLAGS, so we use std.c.O instead
     // of std.os.wasi.O, which is for non-POSIX-like `wasi.path_open`, etc.
     .wasi => std.c.O,
     else => system.O,
@@ -2438,10 +2438,18 @@ pub fn unlinkat(dirfd: fd_t, file_path: []const u8, flags: u32) UnlinkatError!vo
 /// See also `unlinkat`.
 pub fn unlinkatWasi(dirfd: fd_t, file_path: []const u8, flags: u32) UnlinkatError!void {
     const remove_dir = (flags & AT.REMOVEDIR) != 0;
-    const res = if (remove_dir)
+    const res: wasi.errno_t =
+        if (remove_dir)
         wasi.path_remove_directory(dirfd, file_path.ptr, file_path.len)
-    else
-        wasi.path_unlink_file(dirfd, file_path.ptr, file_path.len);
+    else blk: {
+        var stat: wasi.filestat_t = undefined;
+        if (wasi.path_filestat_get(dirfd, wasi.LOOKUP_SYMLINK_FOLLOW, file_path.ptr, file_path.len, &stat) == .SUCCESS) {
+            if (stat.filetype == .DIRECTORY) {
+                break :blk .ISDIR;
+            }
+        }
+        break :blk wasi.path_unlink_file(dirfd, file_path.ptr, file_path.len);
+    };
     switch (res) {
         .SUCCESS => return,
         .ACCES => return error.AccessDenied,
@@ -2595,6 +2603,8 @@ pub fn renameat(
         const new_path_w = try windows.sliceToPrefixedFileW(new_path);
         return renameatW(old_dir_fd, old_path_w.span(), new_dir_fd, new_path_w.span(), windows.TRUE);
     } else if (builtin.os.tag == .wasi and !builtin.link_libc) {
+        var old_stats: wasi.filestat_t = undefined;
+        var new_stats: wasi.filestat_t = undefined;
         var resolve_old: bool = (old_dir_fd == wasi.AT.FDCWD or fs.path.isAbsolute(old_path));
         var resolve_new: bool = (new_dir_fd == wasi.AT.FDCWD or fs.path.isAbsolute(new_path));
 
@@ -2611,7 +2621,23 @@ pub fn renameat(
             if (resolve_new)
                 new = try resolvePathWasi(new_path, &buf_new);
 
+            if (wasi.path_filestat_get(new.dir_fd, wasi.LOOKUP_SYMLINK_FOLLOW, new.relative_path.ptr, new.relative_path.len, &new_stats) == .SUCCESS and wasi.path_filestat_get(old.dir_fd, wasi.LOOKUP_SYMLINK_FOLLOW, old.relative_path.ptr, old.relative_path.len, &old_stats) == .SUCCESS) {
+                if (old_stats.filetype != .DIRECTORY and new_stats.filetype == .DIRECTORY) {
+                    return error.IsDir;
+                }
+                if (old_stats.filetype == .DIRECTORY and new_stats.filetype != .DIRECTORY) {
+                    return error.NotDir;
+                }
+            }
             return renameatWasi(old, new);
+        }
+        if (wasi.path_filestat_get(new.dir_fd, wasi.LOOKUP_SYMLINK_FOLLOW, new.relative_path.ptr, new.relative_path.len, &new_stats) == .SUCCESS and wasi.path_filestat_get(old.dir_fd, wasi.LOOKUP_SYMLINK_FOLLOW, old.relative_path.ptr, old.relative_path.len, &old_stats) == .SUCCESS) {
+            if (old_stats.filetype != .DIRECTORY and new_stats.filetype == .DIRECTORY) {
+                return error.IsDir;
+            }
+            if (old_stats.filetype == .DIRECTORY and new_stats.filetype != .DIRECTORY) {
+                return error.NotDir;
+            }
         }
         return renameatWasi(old, new);
     } else {

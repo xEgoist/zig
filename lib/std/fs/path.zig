@@ -220,6 +220,7 @@ pub fn isAbsoluteZ(path_c: [*:0]const u8) bool {
 }
 
 pub fn isAbsolute(path: []const u8) bool {
+    // TODO: Find a way to manage check wasi targets
     if (native_os == .windows) {
         return isAbsoluteWindows(path);
     } else {

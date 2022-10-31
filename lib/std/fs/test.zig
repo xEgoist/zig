@@ -410,7 +410,6 @@ test "file operations on directories" {
     const test_dir_name = "test_dir";
 
     try tmp_dir.dir.makeDir(test_dir_name);
-
     try testing.expectError(error.IsDir, tmp_dir.dir.createFile(test_dir_name, .{}));
     try testing.expectError(error.IsDir, tmp_dir.dir.deleteFile(test_dir_name));
     switch (builtin.os.tag) {
@@ -426,7 +425,6 @@ test "file operations on directories" {
     // Note: The `.mode = .read_write` is necessary to ensure the error occurs on all platforms.
     // TODO: Add a read-only test as well, see https://github.com/ziglang/zig/issues/5732
     try testing.expectError(error.IsDir, tmp_dir.dir.openFile(test_dir_name, .{ .mode = .read_write }));
-
     switch (builtin.os.tag) {
         .wasi, .freebsd, .netbsd, .openbsd, .dragonfly => {},
         else => {
@@ -472,9 +470,7 @@ test "deleteDir" {
 test "Dir.rename files" {
     var tmp_dir = tmpDir(.{});
     defer tmp_dir.cleanup();
-
     try testing.expectError(error.FileNotFound, tmp_dir.dir.rename("missing_file_name", "something_else"));
-
     // Renaming files
     const test_file_name = "test_file";
     const renamed_test_file_name = "test_file_renamed";
@@ -489,12 +485,10 @@ test "Dir.rename files" {
 
     // Rename to self succeeds
     try tmp_dir.dir.rename(renamed_test_file_name, renamed_test_file_name);
-
     // Rename to existing file succeeds
     var existing_file = try tmp_dir.dir.createFile("existing_file", .{ .read = true });
     existing_file.close();
     try tmp_dir.dir.rename(renamed_test_file_name, "existing_file");
-
     try testing.expectError(error.FileNotFound, tmp_dir.dir.openFile(renamed_test_file_name, .{}));
     file = try tmp_dir.dir.openFile("existing_file", .{});
     file.close();
@@ -529,7 +523,8 @@ test "Dir.rename directories" {
 
 test "Dir.rename directory onto empty dir" {
     // TODO: Fix on Windows, see https://github.com/ziglang/zig/issues/6364
-    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    // TODO: Using wasmtime on windows will cause AccessDenied error. Becuase of calling MoveFileEx
+    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return error.SkipZigTest;
 
     var tmp_dir = testing.tmpDir(.{});
     defer tmp_dir.cleanup();
@@ -546,7 +541,7 @@ test "Dir.rename directory onto empty dir" {
 
 test "Dir.rename directory onto non-empty dir" {
     // TODO: Fix on Windows, see https://github.com/ziglang/zig/issues/6364
-    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return error.SkipZigTest;
 
     var tmp_dir = testing.tmpDir(.{});
     defer tmp_dir.cleanup();
@@ -560,7 +555,6 @@ test "Dir.rename directory onto non-empty dir" {
 
     // Rename should fail with PathAlreadyExists if target_dir is non-empty
     try testing.expectError(error.PathAlreadyExists, tmp_dir.dir.rename("test_dir", "target_dir"));
-
     // Ensure the directory was not renamed
     var dir = try tmp_dir.dir.openDir("test_dir", .{});
     dir.close();
@@ -568,7 +562,7 @@ test "Dir.rename directory onto non-empty dir" {
 
 test "Dir.rename file <-> dir" {
     // TODO: Fix on Windows, see https://github.com/ziglang/zig/issues/6364
-    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return error.SkipZigTest;
 
     var tmp_dir = tmpDir(.{});
     defer tmp_dir.cleanup();
@@ -694,7 +688,8 @@ test "makePath, put some files in it, deleteTreeMinStackSize" {
 }
 
 test "makePath in a directory that no longer exists" {
-    if (builtin.os.tag == .windows) return error.SkipZigTest; // Windows returns FileBusy if attempting to remove an open dir
+    //TODO: WASI will behave the same way as windows due to calling the same kernel32 function
+    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return error.SkipZigTest; // Windows returns FileBusy if attempting to remove an open dir
 
     var tmp = tmpDir(.{});
     defer tmp.cleanup();

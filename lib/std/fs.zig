@@ -1103,8 +1103,20 @@ pub const Dir = struct {
             // Resolve absolute or CWD-relative paths to a path within a Preopen
             var resolved_path_buf: [MAX_PATH_BYTES]u8 = undefined;
             const resolved_path = try os.resolvePathWasi(sub_path, &resolved_path_buf);
+            var stats: w.filestat_t = undefined;
+            if (w.path_filestat_get(self.fd, w.LOOKUP_SYMLINK_FOLLOW, resolved_path.relative_path.ptr, resolved_path.relative_path.len, &stats) == .SUCCESS) {
+                if (stats.filetype == .DIRECTORY) {
+                    return error.IsDir;
+                }
+            }
             const fd = try os.openatWasi(resolved_path.dir_fd, resolved_path.relative_path, 0x0, 0x0, fdflags, base, 0x0);
             return File{ .handle = fd };
+        }
+        var stats: w.filestat_t = undefined;
+        if (w.path_filestat_get(self.fd, w.LOOKUP_SYMLINK_FOLLOW, sub_path.ptr, sub_path.len, &stats) == .SUCCESS) {
+            if (stats.filetype == .DIRECTORY) {
+                return error.IsDir;
+            }
         }
         const fd = try os.openatWasi(self.fd, sub_path, 0x0, 0x0, fdflags, base, 0x0);
         return File{ .handle = fd };
@@ -1270,14 +1282,27 @@ pub const Dir = struct {
         if (flags.exclusive) {
             oflags |= w.O.EXCL;
         }
-        if (self.fd == os.wasi.AT.FDCWD or path.isAbsolute(sub_path)) {
+        var stats: w.filestat_t = undefined;
+        const fd = if (self.fd == os.wasi.AT.FDCWD or path.isAbsolute(sub_path)) blk: {
             // Resolve absolute or CWD-relative paths to a path within a Preopen
-            var resolved_path_buf: [MAX_PATH_BYTES]u8 = undefined;
-            const resolved_path = try os.resolvePathWasi(sub_path, &resolved_path_buf);
-            const fd = try os.openatWasi(resolved_path.dir_fd, resolved_path.relative_path, 0x0, oflags, 0x0, base, 0x0);
-            return File{ .handle = fd };
-        }
-        const fd = try os.openatWasi(self.fd, sub_path, 0x0, oflags, 0x0, base, 0x0);
+            var path_buf: [MAX_PATH_BYTES]u8 = undefined;
+            const resolved_path = try os.resolvePathWasi(sub_path, &path_buf);
+            if (w.path_filestat_get(self.fd, w.LOOKUP_SYMLINK_FOLLOW, resolved_path.relative_path.ptr, resolved_path.relative_path.len, &stats) == .SUCCESS) {
+                if (stats.filetype == .DIRECTORY) {
+                    return error.IsDir;
+                }
+            }
+            break :blk try os.openatWasi(resolved_path.dir_fd, resolved_path.relative_path, 0x0, oflags, 0x0, base, 0x0);
+        } else blk: {
+            if (w.path_filestat_get(self.fd, w.LOOKUP_SYMLINK_FOLLOW, sub_path.ptr, sub_path.len, &stats) == .SUCCESS) {
+                if (stats.filetype == .DIRECTORY) {
+                    return error.IsDir;
+                }
+            }
+            break :blk try os.openatWasi(self.fd, sub_path, 0x0, oflags, 0x0, base, 0x0);
+        };
+        //errdefer close(fd);
+
         return File{ .handle = fd };
     }
 
